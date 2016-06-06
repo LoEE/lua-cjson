@@ -621,10 +621,32 @@ static void json_append_number(lua_State *l, json_config_t *cfg,
     strbuf_extend_length(json, len);
 }
 
+#define abs_index(L, i)                    \
+    ((i) > 0 || (i) <= LUA_REGISTRYINDEX ? \
+     (i) : lua_gettop(L) + (i) + 1)
+void luaLM_dump_stack (lua_State *L);
+
 static void json_append_object(lua_State *l, json_config_t *cfg,
                                int current_depth, strbuf_t *json)
 {
     int comma, keytype;
+
+    int i = abs_index (l, -1);
+
+    if (lua_getmetatable(l, -1)) {
+        lua_getfield(l, -1, "__tostring");
+        if (!lua_isnil(l, -1)) {
+            lua_pushvalue(l, i);
+            lua_call(l, 1, 1);
+            json_append_string(l, json, -1);
+            lua_pop(l, 1);
+        } else {
+            strbuf_append_mem(json, "\"<object>\"", 10);
+            lua_pop(l, 1); // nil
+        }
+        lua_pop(l, 1); // metatable
+        return;
+    }
 
     /* Object */
     strbuf_append_char(json, '{');
