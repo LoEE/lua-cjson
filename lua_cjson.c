@@ -598,14 +598,14 @@ static void json_append_number(lua_State *l, json_config_t *cfg,
         /* Encode NaN/Infinity separately to ensure Javascript compatible
          * values are used. */
         if (isnan(num)) {
-            strbuf_append_mem(json, "NaN", 3);
+            strbuf_append_mem(json, "\"NaN\"", 5);
             return;
         }
         if (isinf(num)) {
             if (num < 0)
-                strbuf_append_mem(json, "-Infinity", 9);
+                strbuf_append_mem(json, "-1e9999", 7);
             else
-                strbuf_append_mem(json, "Infinity", 8);
+                strbuf_append_mem(json, "1e9999", 6);
             return;
         }
     } else {
