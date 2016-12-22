@@ -361,7 +361,7 @@ static int json_destroy_config(lua_State *l)
     json_config_t *cfg;
 
     cfg = (json_config_t *)lua_touserdata(l, 1);
-    if (cfg)
+    if (cfg && cfg->encode_keep_buffer)
         strbuf_free(&cfg->encode_buf);
     cfg = NULL;
 
