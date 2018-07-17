@@ -68,6 +68,7 @@
 #define DEFAULT_DECODE_INVALID_NUMBERS 1
 #define DEFAULT_ENCODE_KEEP_BUFFER 0
 #define DEFAULT_ENCODE_NUMBER_PRECISION 14
+#define DEFAULT_ENCODE_SORT_KEYS 0
 
 #ifdef DISABLE_INVALID_NUMBERS
 #undef DEFAULT_DECODE_INVALID_NUMBERS
@@ -124,6 +125,7 @@ typedef struct {
     int encode_invalid_numbers;     /* 2 => Encode as "null" */
     int encode_number_precision;
     int encode_keep_buffer;
+    int encode_sort_keys;
 
     int decode_invalid_numbers;
     int decode_max_depth;
@@ -321,6 +323,16 @@ static int json_cfg_encode_keep_buffer(lua_State *l)
     return 1;
 }
 
+/* Configures the lexicographical sorting of table keys during JSON encoding */
+static int json_cfg_encode_sort_keys (lua_State *l)
+{
+    json_config_t *cfg = json_arg_init(l, 1);
+
+    json_enum_option(l, 1, &cfg->encode_sort_keys, NULL, 1);
+
+    return 1;
+}
+
 #if defined(DISABLE_INVALID_NUMBERS) && !defined(USE_INTERNAL_FPCONV)
 void json_verify_invalid_number_setting(lua_State *l, int *setting)
 {
@@ -390,6 +402,7 @@ static void json_create_config(lua_State *l)
     cfg->decode_invalid_numbers = DEFAULT_DECODE_INVALID_NUMBERS;
     cfg->encode_keep_buffer = DEFAULT_ENCODE_KEEP_BUFFER;
     cfg->encode_number_precision = DEFAULT_ENCODE_NUMBER_PRECISION;
+    cfg->encode_sort_keys = DEFAULT_ENCODE_SORT_KEYS;
 
 #if DEFAULT_ENCODE_KEEP_BUFFER > 0
     strbuf_init(&cfg->encode_buf, 0);
@@ -648,19 +661,65 @@ static void json_append_object(lua_State *l, json_config_t *cfg,
         return;
     }
 
+    int keycnt = 1;
+    if (cfg->encode_sort_keys) {
+        lua_newtable(l);
+        lua_pushnil(l);
+        /* table, keytable, startkey */
+        while (lua_next(l, -3) != 0) {
+            /* table, keytable, key, value */
+            lua_pop(l, 1);
+            lua_pushvalue(l, -1);
+            keytype = lua_type(l, -2);
+            if (keytype == LUA_TNUMBER) {
+                 lua_tostring(l, -1);
+            }
+            lua_rawseti(l, -3, keycnt++);
+        }
+        lua_getglobal(l, "table");
+        if (!lua_istable(l, -1)) {
+            if (!cfg->encode_keep_buffer)
+                strbuf_free(json);
+            luaL_error(l, "cannot sort keys: could not find the table module");
+        }
+        lua_getfield(l, -1, "sort");
+        if (!lua_isfunction(l, -1)) {
+            if (!cfg->encode_keep_buffer)
+                strbuf_free(json);
+            luaL_error(l, "cannot sort keys: could not find the sort method in the table module");
+        }
+        /* table, keytable, table module, sort function */
+        lua_pushvalue(l, -3);
+        lua_call(l, 1, 0);
+        lua_pop(l, 1);
+        /* table, sorted keytable */
+    }
+
     /* Object */
     strbuf_append_char(json, '{');
 
     lua_pushnil(l);
-    /* table, startkey */
     comma = 0;
-    while (lua_next(l, -2) != 0) {
+    int keyiter = 1;
+    while (1) {
+        if (cfg->encode_sort_keys) {
+            /* table, keytable, prevkey */
+            lua_pop(l, 1);
+            if (keyiter >= keycnt) break;
+            lua_rawgeti(l, -1, keyiter++);
+            lua_pushvalue(l, -1);
+            /* table, keytable, key, key */
+            lua_gettable(l, -4);
+        } else {
+            /* table, prevkey */
+            if (!lua_next(l, -2)) break;
+        }
         if (comma)
             strbuf_append_char(json, ',');
         else
             comma = 1;
 
-        /* table, key, value */
+        /* table, keytable?, key, value */
         keytype = lua_type(l, -2);
         if (keytype == LUA_TNUMBER) {
             strbuf_append_char(json, '"');
@@ -675,10 +734,14 @@ static void json_append_object(lua_State *l, json_config_t *cfg,
             /* never returns */
         }
 
-        /* table, key, value */
+        /* table, keytable?, key, value */
         json_append_data(l, cfg, current_depth, json);
         lua_pop(l, 1);
-        /* table, key */
+        /* table, keytable?, key */
+    }
+
+    if (cfg->encode_sort_keys) {
+        lua_pop(l, 1);
     }
 
     strbuf_append_char(json, '}');
@@ -1379,6 +1442,7 @@ static int lua_cjson_new(lua_State *l)
         { "decode_max_depth", json_cfg_decode_max_depth },
         { "encode_number_precision", json_cfg_encode_number_precision },
         { "encode_keep_buffer", json_cfg_encode_keep_buffer },
+        { "encode_sort_keys", json_cfg_encode_sort_keys },
         { "encode_invalid_numbers", json_cfg_encode_invalid_numbers },
         { "decode_invalid_numbers", json_cfg_decode_invalid_numbers },
         { "new", lua_cjson_new },
